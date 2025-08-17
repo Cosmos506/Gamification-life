@@ -415,17 +415,21 @@ export default function App() {
                   <label className="text-sm">Date</label>
                   <Input type="date" value={form.date} onChange={(e)=>setForm(f=>({...f, date:e.target.value}))} />
                 </div>
-                <div className="md:col-span-2">
-                  <label className="text-sm">Action</label>
-                  <Select value={form.actionId} onValueChange={(v)=>setForm(f=>({...f, actionId:v}))}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Choisir une action"/></SelectTrigger>
-                    <SelectContent>
-                      {actions.map(a=> (
-                        <SelectItem key={a.id} value={a.id}>{a.label} (+{a.points} XP)</SelectItem>
+                    <div className="md:col-span-2">
+                    <label className="text-sm">Action</label>
+                    <select
+                      className="w-full border rounded px-2 py-1"
+                      value={form.actionId}
+                      onChange={(e) => setForm(f => ({ ...f, actionId: e.target.value }))}
+                    >
+                      {actions.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.label} (+{a.points} XP)
+                        </option>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                    </select>
+                  </div>
+
                 <div className="md:col-span-2">
                   <label className="text-sm">Notes (optionnel)</label>
                   <Input value={form.notes} onChange={(e)=>setForm(f=>({...f, notes:e.target.value}))} placeholder="Détails, durée, etc."/>
