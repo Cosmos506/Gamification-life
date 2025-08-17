@@ -8,6 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { Trophy, Download, Upload, History, Settings, Sparkles, Plus, Trash2 } from "lucide-react";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+
+
 
 // -----------------------------
 // CONFIG: Actions & Points (defaults)
