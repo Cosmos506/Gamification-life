@@ -118,8 +118,21 @@ export default function App() {
   // Nettoie la liste des badges notifiés à chaque changement d'actions (pour ne garder que ceux qui existent encore)
   const [entries, setEntries] = useState(() => load("vg_entries", []));
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...load("vg_settings", {}) }));
+  // Badges personnalisés ajoutés par l'utilisateur
+  const [customBadges, setCustomBadges] = useState(() => load("vg_custom_badges", []));
+  useEffect(() => save("vg_custom_badges", customBadges), [customBadges]);
   const firstActionId = actions.length ? actions[0].id : "";
   const [form, setForm] = useState({ date: fmtDate(new Date()), actionId: firstActionId, notes: "", sansDistraction: false });
+
+  // Formulaire local pour création de badge personnalisé
+  const [newBadgeName, setNewBadgeName] = useState("");
+  const [newBadgeMode, setNewBadgeMode] = useState("manual"); // manual | auto
+  const [newBadgeKind, setNewBadgeKind] = useState("action_count");
+  const [newBadgeActionId, setNewBadgeActionId] = useState(firstActionId);
+  const [newBadgeCount, setNewBadgeCount] = useState(1);
+  const [newBadgeXP, setNewBadgeXP] = useState(100);
+  const [newBadgeDays, setNewBadgeDays] = useState(4);
+  const [newBadgeWeeks, setNewBadgeWeeks] = useState(3);
 
   useEffect(() => save("vg_entries", entries), [entries]);
   useEffect(() => save("vg_settings", settings), [settings]);
@@ -315,6 +328,52 @@ export default function App() {
     { count: 100, label: "Immortel" },
   ];
 
+  // Évaluer un badge personnalisé automatique
+  function evaluateCustomBadge(badge) {
+    // retourne { ok: boolean, cond: string }
+    const totalXPVal = totalXP;
+    const countByIdLocal = countById;
+    const daysWith6 = daysWith6Plus;
+    const byDateLocal = byDate;
+    const weeksWithLocal = (id) => {
+      const set = new Set();
+      for (const e of entries.filter(x => x.actionId === id)) {
+        const dt = new Date(e.date);
+        const tmp = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+        const dayNum = (tmp.getUTCDay() + 6) % 7;
+        tmp.setUTCDate(tmp.getUTCDate() - dayNum + 3);
+        const firstThursday = new Date(tmp.getUTCFullYear(), 0, 4);
+        const week = 1 + Math.round(((tmp - firstThursday) / 86400000 - 3 + ((firstThursday.getDay() + 6) % 7)) / 7);
+        set.add(`${dt.getFullYear()}-W${String(week).padStart(2, "0")}`);
+      }
+      return set.size;
+    };
+
+    if (badge.mode !== 'auto') return { ok: !!badge.validated, cond: '' };
+    const spec = badge.spec || {};
+    if (spec.kind === 'action_count') {
+      const cnt = countByIdLocal[spec.actionId] || 0;
+      return { ok: cnt >= spec.count, cond: `Réaliser "${actions.find(a=>a.id===spec.actionId)?.label||spec.actionId}" ${spec.count} fois` };
+    }
+    if (spec.kind === 'total_xp') {
+      return { ok: totalXPVal >= spec.xp, cond: `Atteindre ${spec.xp} XP au total` };
+    }
+    if (spec.kind === 'days_with_6plus') {
+      return { ok: daysWith6 >= spec.days, cond: `Avoir ${spec.days}+ jours avec 6+ actions` };
+    }
+    if (spec.kind === 'consecutive_days') {
+      return { ok: daily.some(d=>d.consecutiveAny >= spec.days), cond: `Avoir ${spec.days} jours consécutifs avec ≥1 action` };
+    }
+    if (spec.kind === 'before_noon') {
+      return { ok: entries.some(e=>e.beforeNoon), cond: `Faire une action avant midi` };
+    }
+    if (spec.kind === 'weeks_with_action') {
+      const w = weeksWithLocal(spec.actionId);
+      return { ok: w >= spec.weeks, cond: `Faire l'action ${actions.find(a=>a.id===spec.actionId)?.label||spec.actionId} ${spec.weeks} semaines` };
+    }
+    return { ok: false, cond: 'Condition inconnue' };
+  }
+
 
   // Générer les badges dynamiques pour chaque action :
   // Afficher uniquement le dernier badge atteint et le prochain à atteindre
@@ -361,7 +420,16 @@ export default function App() {
   });
 
   // Fusionner les deux listes (spéciaux + actions)
-  const badges = [...specialBadges, ...actionBadges];
+  // Évaluer les badges personnalisés
+  const customBadgeObjects = customBadges.map(cb => {
+    if (cb.mode === 'manual') {
+      return { id: cb.id, name: cb.name, cond: cb.cond || 'Validé manuellement', ok: !!cb.validated, isCustom: true, mode: 'manual' };
+    }
+    const res = evaluateCustomBadge(cb);
+    return { id: cb.id, name: cb.name, cond: res.cond || cb.cond || 'Condition automatique', ok: res.ok, isCustom: true, mode: 'auto' };
+  });
+
+  const badges = [...specialBadges, ...actionBadges, ...customBadgeObjects];
 
   
 
@@ -627,6 +695,91 @@ export default function App() {
                       </div>
                     );
                   })}
+                </div>
+                <div className="mt-6 border-t pt-4">
+                  <h3 className="font-semibold mb-2">Badges personnalisés</h3>
+                  <div className="space-y-2 mb-4">
+                    {customBadges.length === 0 && <div className="text-sm text-slate-500">Aucun badge personnalisé</div>}
+                    {customBadges.map(cb => (
+                      <div key={cb.id} className="flex items-center justify-between p-2 bg-white rounded shadow">
+                        <div>
+                          <div className="font-medium">{cb.name} {cb.mode === 'manual' ? <span className="text-xs text-slate-400">(manuel)</span> : <span className="text-xs text-slate-400">(auto)</span>}</div>
+                          <div className="text-xs text-slate-500">{cb.cond || JSON.stringify(cb.spec)}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {cb.mode === 'manual' && <Button size="sm" onClick={()=>{
+                            setCustomBadges(prev=>prev.map(p=>p.id===cb.id?{...p, validated: !p.validated}:p));
+                          }}>{cb.validated? 'Annuler' : 'Valider'}</Button>}
+                          <Button size="sm" variant="destructive" onClick={()=>setCustomBadges(prev=>prev.filter(p=>p.id!==cb.id))}>Supprimer</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid md:grid-cols-3 gap-2 items-end">
+                    <div>
+                      <label className="text-sm">Nom du badge</label>
+                      <Input value={newBadgeName} onChange={(e)=>setNewBadgeName(e.target.value)} placeholder="Titre du badge" />
+                    </div>
+                    <div>
+                      <label className="text-sm">Mode</label>
+                      <select value={newBadgeMode} onChange={(e)=>setNewBadgeMode(e.target.value)} className="w-full border rounded px-2 py-1">
+                        <option value="manual">Manuel (je valide)</option>
+                        <option value="auto">Automatique (condition)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-sm">Type (auto)</label>
+                      <select value={newBadgeKind} onChange={(e)=>setNewBadgeKind(e.target.value)} className="w-full border rounded px-2 py-1">
+                        <option value="action_count">Nombre d'actions (action_count)</option>
+                        <option value="total_xp">XP total (total_xp)</option>
+                        <option value="days_with_6plus">Jours avec 6+ actions</option>
+                        <option value="consecutive_days">Jours consécutifs</option>
+                        <option value="before_noon">Faire avant midi</option>
+                        <option value="weeks_with_action">Semaines avec action</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm">Action (si applicable)</label>
+                      <select value={newBadgeActionId} onChange={(e)=>setNewBadgeActionId(e.target.value)} className="w-full border rounded px-2 py-1">
+                        {actions.map(a=> <option key={a.id} value={a.id}>{a.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-sm">Nombre / Seuil</label>
+                      <Input type="number" value={newBadgeCount} onChange={(e)=>setNewBadgeCount(Number(e.target.value||0))} />
+                    </div>
+                    <div>
+                      <label className="text-sm">XP (pour total_xp)</label>
+                      <Input type="number" value={newBadgeXP} onChange={(e)=>setNewBadgeXP(Number(e.target.value||0))} />
+                    </div>
+
+                    <div className="md:col-span-3 flex gap-2">
+                      <Button onClick={()=>{
+                        if (!newBadgeName.trim()) return alert('Donne un nom au badge');
+                        const id = crypto.randomUUID();
+                        if (newBadgeMode === 'manual') {
+                          setCustomBadges(prev=>[...prev, { id, name: newBadgeName.trim(), mode: 'manual', cond: '', validated: false }]);
+                        } else {
+                          // construire spec en fonction du type choisi
+                          const spec = {};
+                          if (newBadgeKind === 'action_count') { spec.kind = 'action_count'; spec.actionId = newBadgeActionId; spec.count = newBadgeCount || 1; }
+                          else if (newBadgeKind === 'total_xp') { spec.kind = 'total_xp'; spec.xp = newBadgeXP || 100; }
+                          else if (newBadgeKind === 'days_with_6plus') { spec.kind = 'days_with_6plus'; spec.days = newBadgeDays || 1; }
+                          else if (newBadgeKind === 'consecutive_days') { spec.kind = 'consecutive_days'; spec.days = newBadgeDays || 3; }
+                          else if (newBadgeKind === 'before_noon') { spec.kind = 'before_noon'; }
+                          else if (newBadgeKind === 'weeks_with_action') { spec.kind = 'weeks_with_action'; spec.actionId = newBadgeActionId; spec.weeks = newBadgeWeeks || 3; }
+                          setCustomBadges(prev=>[...prev, { id, name: newBadgeName.trim(), mode: 'auto', spec }]);
+                        }
+                        // reset form
+                        setNewBadgeName(''); setNewBadgeMode('manual'); setNewBadgeKind('action_count'); setNewBadgeCount(1);
+                      }}>Ajouter le badge</Button>
+                      <Button variant="secondary" onClick={()=>{
+                        setNewBadgeName(''); setNewBadgeMode('manual'); setNewBadgeKind('action_count'); setNewBadgeCount(1);
+                      }}>Annuler</Button>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
