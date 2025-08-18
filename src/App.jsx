@@ -133,6 +133,16 @@ export default function App() {
   const [newBadgeXP, setNewBadgeXP] = useState(100);
   const [newBadgeDays, setNewBadgeDays] = useState(4);
   const [newBadgeWeeks, setNewBadgeWeeks] = useState(3);
+  const [newBadgeStreak, setNewBadgeStreak] = useState(3);
+  const [newBadgeWeeklyXP, setNewBadgeWeeklyXP] = useState(50);
+  const [newBadgeDistinctActionsCount, setNewBadgeDistinctActionsCount] = useState(3);
+  const [newBadgeComboActionId2, setNewBadgeComboActionId2] = useState(firstActionId);
+  const [newBadgeComboActionIds, setNewBadgeComboActionIds] = useState([firstActionId]);
+  const [newBadgeMonthsCount, setNewBadgeMonthsCount] = useState(2);
+  const [newBadgeMonthlyCount, setNewBadgeMonthlyCount] = useState(10);
+  const [newBadgeComboDays, setNewBadgeComboDays] = useState(1);
+  const [newBadgeDistinctDays, setNewBadgeDistinctDays] = useState(1);
+  const [showDistinctTooltip, setShowDistinctTooltip] = useState(false);
 
   useEffect(() => save("vg_entries", entries), [entries]);
   useEffect(() => save("vg_settings", settings), [settings]);
@@ -370,6 +380,81 @@ export default function App() {
     if (spec.kind === 'weeks_with_action') {
       const w = weeksWithLocal(spec.actionId);
       return { ok: w >= spec.weeks, cond: `Faire l'action ${actions.find(a=>a.id===spec.actionId)?.label||spec.actionId} ${spec.weeks} semaines` };
+    }
+    // Longest streak (plus longue série de jours consécutifs avec >=1 action)
+    if (spec.kind === 'longest_streak') {
+      let best = 0, cur = 0, last = null;
+      const dates = Object.keys(byDate).sort();
+      for (const d of dates) {
+        if (!last) { cur = byDate[d].length>0 ? 1 : 0; }
+        else {
+          const nxt = new Date(last); nxt.setDate(nxt.getDate()+1);
+          const nxtS = fmtDate(nxt);
+          if (nxtS === d && byDate[d].length>0) cur++; else cur = byDate[d].length>0 ? 1 : 0;
+        }
+        if (cur > best) best = cur;
+        last = d;
+      }
+      return { ok: best >= (spec.streak||spec.days||3), cond: `Avoir une série de ${spec.streak||spec.days||3} jours consécutifs` };
+    }
+    // Weekly XP: somme des XP dans une semaine calendaire
+    if (spec.kind === 'weekly_xp') {
+      // calculer la semaine la plus riche
+      const map = {};
+      for (const e of entries) {
+        const dt = new Date(e.date);
+        const year = dt.getFullYear();
+        const week = Math.ceil((((dt - new Date(year,0,1))/86400000)+ new Date(year,0,1).getDay()+1)/7);
+        const key = `${year}-W${String(week).padStart(2,'0')}`;
+        map[key] = (map[key]||0) + e.points;
+      }
+      const best = Math.max(0, ...Object.values(map));
+      return { ok: best >= (spec.xp||spec.weekly_xp||newBadgeWeeklyXP), cond: `Avoir >= ${spec.xp||spec.weekly_xp||newBadgeWeeklyXP} XP sur une semaine` };
+    }
+    // Distinct actions in a day: spec.count = how many distinct actions required in a single day
+    // spec.days = how many distinct days this must occur (default 1)
+    if (spec.kind === 'distinct_actions_per_day') {
+      const requiredDistinct = spec.count || spec.distinct || 3;
+      const requiredDays = spec.days || 1;
+      let matchedDays = 0;
+      for (const d of Object.keys(byDate)) {
+        const set = new Set(byDate[d].map(x=>x.actionId));
+        if (set.size >= requiredDistinct) matchedDays++;
+        if (matchedDays >= requiredDays) return { ok: true, cond: `Avoir ${requiredDistinct} actions distinctes dans ${requiredDays} journée(s)` };
+      }
+      return { ok: false, cond: `Avoir ${requiredDistinct} actions distinctes dans ${requiredDays} journée(s)` };
+    }
+    // Combo actions: faire plusieurs actions (liste) le même jour
+    // spec.actions = [id1,id2,...], spec.days = combien de jours où le combo doit se produire
+    if (spec.kind === 'combo_actions') {
+      const actionsNeeded = Array.isArray(spec.actions) ? spec.actions : (spec.actions ? [spec.actions] : []);
+      const requiredDays = spec.days || 1;
+      if (actionsNeeded.length === 0) return { ok: false, cond: 'Aucune action sélectionnée pour le combo' };
+      let matched = 0;
+      for (const d of Object.keys(byDate)) {
+        const ids = new Set(byDate[d].map(x=>x.actionId));
+        let all = true;
+        for (const aid of actionsNeeded) if (!ids.has(aid)) { all = false; break; }
+        if (all) matched++;
+        if (matched >= requiredDays) return { ok: true, cond: `Faire ${actionsNeeded.map(id=>actions.find(a=>a.id===id)?.label||id).join(' + ')} le même jour, ${requiredDays} fois` };
+      }
+      return { ok: false, cond: `Faire ${actionsNeeded.map(id=>actions.find(a=>a.id===id)?.label||id).join(' + ')} le même jour, ${requiredDays} fois` };
+    }
+    // Multi-months action: action présente sur N mois différents
+    if (spec.kind === 'multi_months_action') {
+      const set = new Set();
+      for (const e of entries.filter(x=>x.actionId===spec.actionId)) set.add(e.date.slice(0,7));
+      return { ok: set.size >= (spec.months||newBadgeMonthsCount), cond: `Faire l'action ${actions.find(a=>a.id===spec.actionId)?.label||spec.actionId} sur ${spec.months||newBadgeMonthsCount} mois différents` };
+    }
+    // Monthly total count: X fois dans un même mois
+    if (spec.kind === 'monthly_total_count') {
+      const map = {};
+      for (const e of entries.filter(x=>x.actionId===spec.actionId)) {
+        const ym = e.date.slice(0,7);
+        map[ym] = (map[ym]||0) + 1;
+      }
+      const ok = Object.values(map).some(v=>v >= (spec.count||spec.monthlyCount||newBadgeMonthlyCount));
+      return { ok, cond: `Réaliser ${spec.count||spec.monthlyCount||newBadgeMonthlyCount} fois ${actions.find(a=>a.id===spec.actionId)?.label||spec.actionId} en 1 mois` };
     }
     return { ok: false, cond: 'Condition inconnue' };
   }
@@ -716,7 +801,7 @@ export default function App() {
                     ))}
                   </div>
 
-                  <div className="grid md:grid-cols-3 gap-2 items-end">
+                  <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2 items-end">
                     <div>
                       <label className="text-sm">Nom du badge</label>
                       <Input value={newBadgeName} onChange={(e)=>setNewBadgeName(e.target.value)} placeholder="Titre du badge" />
@@ -737,6 +822,12 @@ export default function App() {
                         <option value="consecutive_days">Jours consécutifs</option>
                         <option value="before_noon">Faire avant midi</option>
                         <option value="weeks_with_action">Semaines avec action</option>
+                        <option value="longest_streak">Plus longue série (longest_streak)</option>
+                        <option value="weekly_xp">XP hebdomadaire max (weekly_xp)</option>
+                        <option value="distinct_actions_per_day">Actions distinctes en 1 jour</option>
+                        <option value="combo_actions">Combo d'actions le même jour</option>
+                        <option value="multi_months_action">Action sur plusieurs mois</option>
+                        <option value="monthly_total_count">X fois dans un mois</option>
                       </select>
                     </div>
 
@@ -746,14 +837,77 @@ export default function App() {
                         {actions.map(a=> <option key={a.id} value={a.id}>{a.label}</option>)}
                       </select>
                     </div>
-                    <div>
+                    {newBadgeKind === 'combo_actions' && (
+                      <div>
+                        <label className="text-sm">Actions du combo (maintenez Ctrl/Cmd pour multi-sélection)</label>
+                        <select multiple value={newBadgeComboActionIds} onChange={(e)=>{
+                          const opts = Array.from(e.target.selectedOptions).map(o=>o.value);
+                          setNewBadgeComboActionIds(opts.length?opts:[firstActionId]);
+                        }} className="w-full border rounded px-2 py-1 h-24 sm:h-32">
+                          {actions.map(a=> <option key={a.id} value={a.id}>{a.label}</option>)}
+                        </select>
+                        <div className="text-xs text-slate-400 mt-1">Ex: sélectionne 2+ actions pour exiger qu'elles soient faites le même jour.</div>
+                      </div>
+                    )}
+                    <div className="relative">
                       <label className="text-sm">Nombre / Seuil</label>
                       <Input type="number" value={newBadgeCount} onChange={(e)=>setNewBadgeCount(Number(e.target.value||0))} />
+                      {/* tooltip moved below input for better responsiveness */}
+                      <div className="mt-2">
+                        <span
+                          onMouseEnter={()=>setShowDistinctTooltip(true)}
+                          onMouseLeave={()=>setShowDistinctTooltip(false)}
+                          className="inline-flex items-center gap-2 text-xs text-slate-500 cursor-help"
+                        >
+                          <span className="text-xs bg-slate-200 rounded-full px-1">i</span>
+                          <span>Explication</span>
+                        </span>
+                        {showDistinctTooltip && (
+                          <div
+                            onMouseEnter={()=>setShowDistinctTooltip(true)}
+                            onMouseLeave={()=>setShowDistinctTooltip(false)}
+                            className="mt-2 text-xs text-slate-700 bg-white border rounded p-2 shadow-md z-50 w-64 sm:w-80"
+                            style={{position: 'absolute', left: 0}}
+                          >
+                            Nombre d'actions différentes à réaliser dans une journée. Le champ "Nombre / Seuil" (ci-dessus) correspond au nombre de journées qui doivent respecter cette condition (ex: 3 jours).
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <label className="text-sm">XP (pour total_xp)</label>
                       <Input type="number" value={newBadgeXP} onChange={(e)=>setNewBadgeXP(Number(e.target.value||0))} />
                     </div>
+                    {newBadgeKind === 'consecutive_days' || newBadgeKind === 'longest_streak' ? (
+                      <div>
+                        <label className="text-sm">Jours requis</label>
+                        <Input type="number" value={newBadgeStreak} onChange={(e)=>setNewBadgeStreak(Number(e.target.value||0))} />
+                      </div>
+                    ) : null}
+                    {newBadgeKind === 'weekly_xp' && (
+                      <div>
+                        <label className="text-sm">XP hebdomadaire</label>
+                        <Input type="number" value={newBadgeWeeklyXP} onChange={(e)=>setNewBadgeWeeklyXP(Number(e.target.value||0))} />
+                      </div>
+                    )}
+                    {newBadgeKind === 'distinct_actions_per_day' && (
+                      <div>
+                        <label className="text-sm">Actions distinctes requises</label>
+                        <Input type="number" value={newBadgeDistinctActionsCount} onChange={(e)=>setNewBadgeDistinctActionsCount(Number(e.target.value||0))} />
+                      </div>
+                    )}
+                    {newBadgeKind === 'multi_months_action' && (
+                      <div>
+                        <label className="text-sm">Mois différents</label>
+                        <Input type="number" value={newBadgeMonthsCount} onChange={(e)=>setNewBadgeMonthsCount(Number(e.target.value||0))} />
+                      </div>
+                    )}
+                    {newBadgeKind === 'monthly_total_count' && (
+                      <div>
+                        <label className="text-sm">Nombre dans un mois</label>
+                        <Input type="number" value={newBadgeMonthlyCount} onChange={(e)=>setNewBadgeMonthlyCount(Number(e.target.value||0))} />
+                      </div>
+                    )}
 
                     <div className="md:col-span-3 flex gap-2">
                       <Button onClick={()=>{
@@ -770,6 +924,17 @@ export default function App() {
                           else if (newBadgeKind === 'consecutive_days') { spec.kind = 'consecutive_days'; spec.days = newBadgeDays || 3; }
                           else if (newBadgeKind === 'before_noon') { spec.kind = 'before_noon'; }
                           else if (newBadgeKind === 'weeks_with_action') { spec.kind = 'weeks_with_action'; spec.actionId = newBadgeActionId; spec.weeks = newBadgeWeeks || 3; }
+                          else if (newBadgeKind === 'longest_streak') { spec.kind = 'longest_streak'; spec.streak = newBadgeStreak || 3; }
+                          else if (newBadgeKind === 'weekly_xp') { spec.kind = 'weekly_xp'; spec.xp = newBadgeWeeklyXP || 50; }
+                          else if (newBadgeKind === 'distinct_actions_per_day') { spec.kind = 'distinct_actions_per_day'; spec.count = newBadgeDistinctActionsCount || 3; spec.days = newBadgeDistinctDays || 1; }
+                          else if (newBadgeKind === 'combo_actions') { spec.kind = 'combo_actions'; spec.actions = newBadgeComboActionIds && newBadgeComboActionIds.length ? newBadgeComboActionIds : [newBadgeActionId]; spec.days = newBadgeComboDays || 1; }
+                          else if (newBadgeKind === 'multi_months_action') { spec.kind = 'multi_months_action'; spec.actionId = newBadgeActionId; spec.months = newBadgeMonthsCount || 2; }
+                          else if (newBadgeKind === 'monthly_total_count') { spec.kind = 'monthly_total_count'; spec.actionId = newBadgeActionId; spec.count = newBadgeMonthlyCount || 10; }
+                          // set a readable cond for auto badges
+                          if (!spec.cond) {
+                            if (spec.kind === 'action_count') spec.cond = `Réaliser ${spec.count}× ${actions.find(a=>a.id===spec.actionId)?.label||spec.actionId}`;
+                            if (spec.kind === 'total_xp') spec.cond = `Atteindre ${spec.xp} XP au total`;
+                          }
                           setCustomBadges(prev=>[...prev, { id, name: newBadgeName.trim(), mode: 'auto', spec }]);
                         }
                         // reset form
