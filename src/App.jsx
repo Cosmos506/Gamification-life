@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+  import React, { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,18 +112,19 @@ const DEFAULT_SETTINGS = {
 // Main App
 // -----------------------------
 export default function App() {
-  const [entries, setEntries] = useState(() => load("vg_entries", []));
-  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...load("vg_settings", {}) }));
 
   // 🔥 Actions : désormais dans le state (modifiable & sauvegardé)
   const [actions, setActions] = useState(() => load("vg_actions", DEFAULT_ACTIONS));
-
+  // Nettoie la liste des badges notifiés à chaque changement d'actions (pour ne garder que ceux qui existent encore)
+  const [entries, setEntries] = useState(() => load("vg_entries", []));
+  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...load("vg_settings", {}) }));
   const firstActionId = actions.length ? actions[0].id : "";
   const [form, setForm] = useState({ date: fmtDate(new Date()), actionId: firstActionId, notes: "", sansDistraction: false });
 
   useEffect(() => save("vg_entries", entries), [entries]);
   useEffect(() => save("vg_settings", settings), [settings]);
   useEffect(() => save("vg_actions", actions), [actions]);
+
 
   // Si l'action sélectionnée n'existe plus (supprimée), basculer sur la 1ère
   useEffect(() => {
@@ -256,8 +257,8 @@ export default function App() {
     return ok;
   });
 
-  // Badge checks (✅ / ❌)
-  const badges = [
+  // Badges spéciaux (inchangés)
+  const specialBadges = [
     { id: "concentre", name: "Concentré", cond: "1 Pomodoro sans distraction", ok: entries.some(e => e.actionId === "pomodoro" && e.sansDistraction) },
     { id: "marathonien", name: "Marathonien", cond: "4 Pomodoros consécutifs", ok: (countById["pomo4"] || 0) >= 1 },
     { id: "superping", name: "Super Ping", cond: "3 semaines ping-pong", ok: weeksWith("ping") >= 3 },
@@ -301,6 +302,68 @@ export default function App() {
     { id: "defiSupreme", name: "Défi Suprême", cond: "Défi spécial difficile", ok: (countById["defi"] || 0) >= 1 },
     { id: "legende", name: "Légende Vivante", cond: "Atteindre le niveau 100", ok: lvl >= 100 },
   ];
+
+  // Paliers de badges pour chaque action
+  const badgeLevels = [
+    { count: 1, label: "Débutant" },
+    { count: 3, label: "Apprenti" },
+    { count: 5, label: "Confirmé" },
+    { count: 10, label: "Expert" },
+    { count: 20, label: "Maître" },
+    { count: 50, label: "Légende" },
+    { count: 75, label: "Héros" },
+    { count: 100, label: "Immortel" },
+  ];
+
+
+  // Générer les badges dynamiques pour chaque action :
+  // Afficher uniquement le dernier badge atteint et le prochain à atteindre
+  const actionBadges = actions.flatMap(a => {
+    const count = entries.filter(e => e.actionId === a.id).length;
+    let lastReached = null;
+    let nextTarget = null;
+    for (let i = 0; i < badgeLevels.length; i++) {
+      if (count >= badgeLevels[i].count) {
+        lastReached = badgeLevels[i];
+      } else {
+        nextTarget = badgeLevels[i];
+        break;
+      }
+    }
+    const res = [];
+    if (lastReached) {
+      res.push({
+        id: `action-${a.id}-lvl${lastReached.count}`,
+        name: `${lastReached.label} ${a.label}`,
+        cond: `Réaliser l'action "${a.label}" ${lastReached.count} fois`,
+        ok: true
+      });
+    }
+    if (nextTarget) {
+      res.push({
+        id: `action-${a.id}-lvl${nextTarget.count}`,
+        name: `${nextTarget.label} ${a.label}`,
+        cond: `Réaliser l'action "${a.label}" ${nextTarget.count} fois`,
+        ok: false
+      });
+    }
+    // Si aucun badge atteint, montrer le premier
+    if (!lastReached && !nextTarget && badgeLevels.length > 0) {
+      const first = badgeLevels[0];
+      res.push({
+        id: `action-${a.id}-lvl${first.count}`,
+        name: `${first.label} ${a.label}`,
+        cond: `Réaliser l'action "${a.label}" ${first.count} fois`,
+        ok: false
+      });
+    }
+    return res;
+  });
+
+  // Fusionner les deux listes (spéciaux + actions)
+  const badges = [...specialBadges, ...actionBadges];
+
+  
 
   // Chart data (last 14 days)
   const chartData = useMemo(() => {
@@ -353,10 +416,12 @@ export default function App() {
     };
     reader.readAsText(file);
   }
+  // Détection du déblocage d'un badge d'action (notification toast)
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-800 p-4 sm:p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
+      
+  <div className="max-w-6xl mx-auto space-y-6">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2"><Sparkles className="w-6 h-6"/> Vie Gamifiée</h1>
           <div className="flex items-center gap-2">
@@ -537,14 +602,31 @@ export default function App() {
               </CardHeader>
               <CardContent>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {badges.map(b => (
-                    <div key={b.id} className="p-4 rounded-2xl bg-white shadow flex items-center justify-between">
-                      <div>
-                        <div className="font-semibold flex items-center gap-2">{b.name} {b.ok ? <Badge className="bg-green-600">✅</Badge> : <Badge variant="secondary">🔒</Badge>}</div>
-                        <div className="text-xs text-slate-500 mt-1">{b.cond}</div>
+                  {badges.map((b, i) => {
+                    // Afficher un message de félicitations uniquement pour les badges validés d'action (pas les spéciaux)
+                    const isActionBadge = b.id.startsWith("action-") && b.ok;
+                    // Vérifier si c'est le dernier badge validé pour cette action (pour éviter d'afficher plusieurs messages)
+                    let showCongrats = false;
+                    if (isActionBadge) {
+                      // Chercher le badge suivant pour la même action
+                      const next = badges.find((b2, j) =>
+                        j > i && b2.id.startsWith("action-") && b2.id.split("-")[1] === b.id.split("-")[1]
+                      );
+                      // S'il n'y a pas de badge suivant non validé, ou si le suivant n'est pas validé, on affiche le message
+                      if (!next || !next.ok) showCongrats = true;
+                    }
+                    return (
+                      <div key={b.id} className="p-4 rounded-2xl bg-white shadow flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold flex items-center gap-2">{b.name} {b.ok ? <Badge className="bg-green-600">✅</Badge> : <Badge variant="secondary">🔒</Badge>}</div>
+                          <div className="text-xs text-slate-500 mt-1">{b.cond}</div>
+                          {showCongrats && (
+                            <div className="text-green-700 text-xs font-semibold mt-2">🎉 Félicitations, tu as débloqué ce badge !</div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
